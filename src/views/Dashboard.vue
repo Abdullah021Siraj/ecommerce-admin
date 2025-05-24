@@ -12,7 +12,7 @@
               <button
                 v-for="tab in tabs"
                 :key="tab.id"
-                @click="activeTab = tab.id"
+                @click="handleTabChange(tab.id)"
                 :class="[
                   'inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium',
                   activeTab === tab.id
@@ -25,24 +25,57 @@
               </button>
             </div>
           </div>
+          <div class="flex items-center">
+            <div :class="[
+              'flex items-center px-2 py-1 rounded-full text-xs',
+              isConnected ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+            ]">
+              <div :class="[
+                'w-2 h-2 rounded-full mr-2',
+                isConnected ? 'bg-green-400' : 'bg-red-400'
+              ]"></div>
+              {{ isConnected ? 'Connected' : 'Disconnected' }}
+            </div>
+          </div>
         </div>
       </div>
     </nav>
 
     <!-- Main Content -->
     <main class="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+      <!-- Loading State -->
+      <div v-if="loading" class="flex justify-center items-center h-64">
+        <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      </div>
+
+      <!-- Error State -->
+      <div v-else-if="error" class="bg-red-50 border border-red-200 rounded-md p-4 mb-6">
+        <div class="flex">
+          <AlertTriangle class="h-5 w-5 text-red-400" />
+          <div class="ml-3">
+            <h3 class="text-sm font-medium text-red-800">Connection Error</h3>
+            <div class="mt-2 text-sm text-red-700">
+              <p>{{ error }}</p>
+              <button @click="retryConnection" class="mt-2 text-red-600 hover:text-red-500 underline">
+                Retry Connection
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Revenue Analysis Page -->
-      <div v-if="activeTab === 'revenue'" class="px-4 py-6 sm:px-0">
+      <div v-else-if="activeTab === 'revenue'" class="px-4 py-6 sm:px-0">
         <div class="mb-6">
           <h2 class="text-2xl font-bold text-gray-900 mb-4">Revenue Analysis</h2>
           
           <!-- Filter Controls -->
           <div class="flex flex-wrap gap-4 mb-6">
-            <select v-model="selectedCategory" class="rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+            <select v-model="selectedCategory" @change="fetchAnalytics" class="rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
               <option value="">All Categories</option>
               <option v-for="category in categories" :key="category" :value="category">{{ category }}</option>
             </select>
-            <select v-model="selectedPeriod" class="rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+            <select v-model="selectedPeriod" @change="fetchAnalytics" class="rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
               <option value="daily">Daily</option>
               <option value="weekly">Weekly</option>
               <option value="monthly">Monthly</option>
@@ -51,7 +84,7 @@
           </div>
 
           <!-- Revenue Cards -->
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
             <div class="bg-white overflow-hidden shadow rounded-lg">
               <div class="p-5">
                 <div class="flex items-center">
@@ -61,7 +94,7 @@
                   <div class="ml-5 w-0 flex-1">
                     <dl>
                       <dt class="text-sm font-medium text-gray-500 truncate">Total Orders</dt>
-                      <dd class="text-lg font-medium text-gray-900">{{ filteredMetrics.totalOrders }}</dd>
+                      <dd class="text-lg font-medium text-gray-900">{{ analytics.totals?.total_orders?.toLocaleString() || 0 }}</dd>
                     </dl>
                   </div>
                 </div>
@@ -77,7 +110,7 @@
                   <div class="ml-5 w-0 flex-1">
                     <dl>
                       <dt class="text-sm font-medium text-gray-500 truncate">Total Revenue</dt>
-                      <dd class="text-lg font-medium text-gray-900">${{ filteredMetrics.totalRevenue.toLocaleString() }}</dd>
+                      <dd class="text-lg font-medium text-gray-900">${{ analytics.totals?.total_revenue?.toLocaleString() || 0 }}</dd>
                     </dl>
                   </div>
                 </div>
@@ -93,7 +126,23 @@
                   <div class="ml-5 w-0 flex-1">
                     <dl>
                       <dt class="text-sm font-medium text-gray-500 truncate">Average Order Value</dt>
-                      <dd class="text-lg font-medium text-gray-900">${{ (filteredMetrics.totalRevenue / filteredMetrics.totalOrders || 0).toFixed(2) }}</dd>
+                      <dd class="text-lg font-medium text-gray-900">${{ averageOrderValue }}</dd>
+                    </dl>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="bg-white overflow-hidden shadow rounded-lg">
+              <div class="p-5">
+                <div class="flex items-center">
+                  <div class="flex-shrink-0">
+                    <Package class="h-6 w-6 text-gray-400" />
+                  </div>
+                  <div class="ml-5 w-0 flex-1">
+                    <dl>
+                      <dt class="text-sm font-medium text-gray-500 truncate">Products Sold</dt>
+                      <dd class="text-lg font-medium text-gray-900">{{ analytics.totals?.total_products?.toLocaleString() || 0 }}</dd>
                     </dl>
                   </div>
                 </div>
@@ -101,22 +150,57 @@
             </div>
           </div>
 
-          <!-- Revenue Chart -->
+          <!-- Charts Row -->
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+            <!-- Revenue Chart (2/3 width) -->
+            <div class="lg:col-span-2">
+              <RevenueChart 
+                :data="analytics.data" 
+                :period="selectedPeriod"
+                :category="selectedCategory"
+              />
+            </div>
+            
+            <!-- Category Chart (1/3 width) -->
+            <div class="lg:col-span-1">
+              <CategoryChart :data="categoryBreakdown" />
+            </div>
+          </div>
+
+          <!-- Top Products Table -->
           <div class="bg-white shadow rounded-lg p-6">
-            <h3 class="text-lg font-medium text-gray-900 mb-4">Revenue Trends</h3>
-            <div class="h-64 flex items-center justify-center bg-gray-50 rounded">
-              <div class="text-center">
-                <BarChart3 class="h-12 w-12 text-gray-400 mx-auto mb-2" />
-                <p class="text-gray-500">Revenue chart visualization would be displayed here</p>
-                <p class="text-sm text-gray-400">{{ selectedPeriod }} data for {{ selectedCategory || 'all categories' }}</p>
-              </div>
+            <h3 class="text-lg font-medium text-gray-900 mb-4">Top Selling Products</h3>
+            <div class="overflow-x-auto">
+              <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                  <tr>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Units Sold</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Revenue</th>
+                  </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                  <tr v-for="product in topProducts" :key="product.id">
+                    <td class="px-6 py-4 whitespace-nowrap">
+                      <div class="text-sm font-medium text-gray-900">{{ product.name }}</div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ product.category }}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ Number(product.units_sold)?.toLocaleString() || 0 }}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${{ Number(product.revenue)?.toLocaleString() || 0 }}</td>
+                  </tr>
+                  <tr v-if="topProducts.length === 0">
+                    <td colspan="4" class="px-6 py-4 text-center text-gray-500">No data available</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
       </div>
 
       <!-- Inventory Management Page -->
-      <div v-if="activeTab === 'inventory'" class="px-4 py-6 sm:px-0">
+      <div v-else-if="activeTab === 'inventory'" class="px-4 py-6 sm:px-0">
         <div class="mb-6">
           <h2 class="text-2xl font-bold text-gray-900 mb-4">Inventory Management</h2>
           
@@ -125,37 +209,38 @@
             <div class="flex-1 min-w-64">
               <input
                 v-model="searchQuery"
+                @input="debouncedSearch"
                 type="text"
                 placeholder="Search products..."
                 class="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
               />
             </div>
-            <select v-model="inventoryFilter" class="rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+            <select v-model="inventoryFilter" @change="fetchProducts" class="rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
               <option value="">All Stock Levels</option>
               <option value="low">Low Stock</option>
               <option value="out">Out of Stock</option>
               <option value="in">In Stock</option>
             </select>
-            <select v-model="categorySortFilter" class="rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+            <select v-model="categorySortFilter" @change="fetchProducts" class="rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
               <option value="">All Categories</option>
               <option v-for="category in categories" :key="category" :value="category">{{ category }}</option>
             </select>
           </div>
 
-          <!-- Low Stock Alerts -->
-          <div v-if="lowStockProducts.length > 0" class="bg-yellow-50 border border-yellow-200 rounded-md p-4 mb-6">
+          <!-- Alerts -->
+          <div v-if="inventoryAlerts.low_stock?.length > 0" class="bg-yellow-50 border border-yellow-200 rounded-md p-4 mb-6">
             <div class="flex">
               <AlertTriangle class="h-5 w-5 text-yellow-400" />
               <div class="ml-3">
                 <h3 class="text-sm font-medium text-yellow-800">Low Stock Alert</h3>
                 <div class="mt-2 text-sm text-yellow-700">
-                  <p>{{ lowStockProducts.length }} products need restocking:</p>
+                  <p>{{ inventoryAlerts.low_stock.length }} products need restocking:</p>
                   <ul class="list-disc list-inside mt-1">
-                    <li v-for="product in lowStockProducts.slice(0, 3)" :key="product.id">
+                    <li v-for="product in inventoryAlerts.low_stock.slice(0, 3)" :key="product.id">
                       {{ product.name }} ({{ product.stock }} remaining)
                     </li>
-                    <li v-if="lowStockProducts.length > 3">
-                      and {{ lowStockProducts.length - 3 }} more...
+                    <li v-if="inventoryAlerts.low_stock.length > 3">
+                      and {{ inventoryAlerts.low_stock.length - 3 }} more...
                     </li>
                   </ul>
                 </div>
@@ -167,7 +252,7 @@
           <div class="bg-white shadow overflow-hidden sm:rounded-md">
             <div class="px-4 py-5 sm:p-6">
               <div class="flex justify-between items-center mb-4">
-                <h3 class="text-lg font-medium text-gray-900">Products</h3>
+                <h3 class="text-lg font-medium text-gray-900">Products ({{ products.length }})</h3>
                 <div class="flex gap-2">
                   <button
                     @click="sortBy('name')"
@@ -203,29 +288,30 @@
                     </tr>
                   </thead>
                   <tbody class="bg-white divide-y divide-gray-200">
-                    <tr v-for="product in filteredProducts" :key="product.id">
+                    <tr v-for="product in products" :key="product.id">
                       <td class="px-6 py-4 whitespace-nowrap">
                         <div class="flex items-center">
                           <div class="flex-shrink-0 h-10 w-10">
-                            <div class="h-10 w-10 rounded bg-gray-200 flex items-center justify-center">
+                            <img v-if="product.image_url" :src="`${API_BASE_URL}${product.image_url}`" :alt="product.name" class="h-10 w-10 rounded object-cover">
+                            <div v-else class="h-10 w-10 rounded bg-gray-200 flex items-center justify-center">
                               <Package class="h-5 w-5 text-gray-400" />
                             </div>
                           </div>
                           <div class="ml-4">
                             <div class="text-sm font-medium text-gray-900">{{ product.name }}</div>
-                            <div class="text-sm text-gray-500">{{ product.description.substring(0, 50) }}...</div>
+                            <div class="text-sm text-gray-500">{{ product.description?.substring(0, 50) }}...</div>
                           </div>
                         </div>
                       </td>
                       <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ product.category }}</td>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${{ product.price.toFixed(2) }}</td>
+                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${{ Number(product.price).toFixed(2) }}</td>
                       <td class="px-6 py-4 whitespace-nowrap">
                         <input
-                          v-model.number="product.stock"
+                          :value="product.stock"
+                          @change="updateStock(product, $event.target.value)"
                           type="number"
                           min="0"
                           class="w-20 rounded border-gray-300 text-sm"
-                          @change="updateStock(product)"
                         />
                       </td>
                       <td class="px-6 py-4 whitespace-nowrap">
@@ -253,8 +339,34 @@
                         </button>
                       </td>
                     </tr>
+                    <tr v-if="products.length === 0">
+                      <td colspan="6" class="px-6 py-4 text-center text-gray-500">No products found</td>
+                    </tr>
                   </tbody>
                 </table>
+              </div>
+
+              <!-- Pagination -->
+              <div v-if="pagination.pages > 1" class="flex items-center justify-between mt-6">
+                <div class="text-sm text-gray-700">
+                  Showing {{ ((pagination.page - 1) * pagination.limit) + 1 }} to {{ Math.min(pagination.page * pagination.limit, pagination.total) }} of {{ pagination.total }} results
+                </div>
+                <div class="flex gap-2">
+                  <button
+                    @click="changePage(pagination.page - 1)"
+                    :disabled="pagination.page <= 1"
+                    class="px-3 py-1 text-sm border rounded disabled:opacity-50"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    @click="changePage(pagination.page + 1)"
+                    :disabled="pagination.page >= pagination.pages"
+                    class="px-3 py-1 text-sm border rounded disabled:opacity-50"
+                  >
+                    Next
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -262,7 +374,7 @@
       </div>
 
       <!-- Product Registration Page -->
-      <div v-if="activeTab === 'products'" class="px-4 py-6 sm:px-0">
+      <div v-else-if="activeTab === 'products'" class="px-4 py-6 sm:px-0">
         <div class="mb-6">
           <h2 class="text-2xl font-bold text-gray-900 mb-4">Product Registration</h2>
           
@@ -357,9 +469,10 @@
                 </button>
                 <button
                   type="submit"
-                  class="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                  :disabled="submitting"
+                  class="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
                 >
-                  Add Product
+                  {{ submitting ? 'Adding...' : 'Add Product' }}
                 </button>
               </div>
             </form>
@@ -382,7 +495,7 @@
 </template>
 
 <script>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { 
   BarChart3, 
   ShoppingCart, 
@@ -398,6 +511,10 @@ import {
   CheckCircle, 
   AlertTriangle 
 } from 'lucide-vue-next'
+import RevenueChart from '../components/RevenueChart.vue'
+import CategoryChart from '../components/CategoryChart.vue'
+
+const API_BASE_URL = 'http://localhost:3001'
 
 export default {
   name: 'EcommerceAdminDashboard',
@@ -414,121 +531,40 @@ export default {
     Trash2,
     Upload,
     CheckCircle,
-    AlertTriangle
+    AlertTriangle,
+    RevenueChart,
+    CategoryChart
   },
   setup() {
     // Reactive data
     const activeTab = ref('revenue')
     const selectedCategory = ref('')
-    const selectedPeriod = ref('monthly')
+    const selectedPeriod = ref('daily')
     const searchQuery = ref('')
     const inventoryFilter = ref('')
     const categorySortFilter = ref('')
     const sortField = ref('')
     const sortDirection = ref('asc')
     const showSuccessMessage = ref(false)
+    const loading = ref(false)
+    const submitting = ref(false)
+    const isConnected = ref(false)
+    const error = ref(null)
+
+    // Data
+    const products = ref([])
+    const categories = ref([])
+    const analytics = ref({ data: [], totals: {} })
+    const topProducts = ref([])
+    const categoryBreakdown = ref([])
+    const inventoryAlerts = ref({ low_stock: [], out_of_stock: [] })
+    const pagination = ref({ page: 1, limit: 20, total: 0, pages: 0 })
 
     // Navigation tabs
     const tabs = ref([
       { id: 'revenue', name: 'Revenue Analysis', icon: BarChart3 },
       { id: 'inventory', name: 'Inventory Management', icon: Package },
       { id: 'products', name: 'Product Registration', icon: Plus }
-    ])
-
-    // Categories
-    const categories = ref([
-      'Electronics',
-      'Clothing',
-      'Home & Garden',
-      'Sports & Outdoors',
-      'Books',
-      'Health & Beauty',
-      'Toys & Games'
-    ])
-
-    // Sample products data (Amazon/Walmart style)
-    const products = ref([
-      {
-        id: 1,
-        name: 'Apple iPhone 15 Pro',
-        description: 'Latest iPhone with advanced camera system and A17 Pro chip',
-        category: 'Electronics',
-        price: 999.99,
-        stock: 25,
-        image: null
-      },
-      {
-        id: 2,
-        name: 'Samsung 65" 4K Smart TV',
-        description: 'Ultra HD Smart TV with HDR and built-in streaming apps',
-        category: 'Electronics',
-        price: 799.99,
-        stock: 8,
-        image: null
-      },
-      {
-        id: 3,
-        name: 'Nike Air Max 270',
-        description: 'Comfortable running shoes with Max Air cushioning',
-        category: 'Clothing',
-        price: 129.99,
-        stock: 45,
-        image: null
-      },
-      {
-        id: 4,
-        name: 'KitchenAid Stand Mixer',
-        description: 'Professional 5-quart stand mixer for baking enthusiasts',
-        category: 'Home & Garden',
-        price: 349.99,
-        stock: 12,
-        image: null
-      },
-      {
-        id: 5,
-        name: 'PlayStation 5 Console',
-        description: 'Next-gen gaming console with ultra-fast SSD',
-        category: 'Electronics',
-        price: 499.99,
-        stock: 3,
-        image: null
-      },
-      {
-        id: 6,
-        name: 'Levi\'s 501 Original Jeans',
-        description: 'Classic straight-leg jeans in authentic indigo',
-        category: 'Clothing',
-        price: 69.99,
-        stock: 0,
-        image: null
-      },
-      {
-        id: 7,
-        name: 'Dyson V15 Detect Vacuum',
-        description: 'Cordless vacuum with laser dust detection',
-        category: 'Home & Garden',
-        price: 649.99,
-        stock: 15,
-        image: null
-      },
-      {
-        id: 8,
-        name: 'Wilson Tennis Racket',
-        description: 'Professional tennis racket for intermediate players',
-        category: 'Sports & Outdoors',
-        price: 89.99,
-        stock: 22,
-        image: null
-      }
-    ])
-
-    // Sample sales data
-    const salesData = ref([
-      { date: '2024-01-01', orders: 45, revenue: 12500, category: 'Electronics' },
-      { date: '2024-01-02', orders: 32, revenue: 8900, category: 'Clothing' },
-      { date: '2024-01-03', orders: 28, revenue: 7200, category: 'Home & Garden' },
-      { date: '2024-01-04', orders: 51, revenue: 15600, category: 'Electronics' },
-      { date: '2024-01-05', orders: 38, revenue: 9800, category: 'Sports & Outdoors' }
     ])
 
     // New product form
@@ -542,76 +578,183 @@ export default {
     })
 
     // Computed properties
-    const filteredMetrics = computed(() => {
-      let data = salesData.value
-      if (selectedCategory.value) {
-        data = data.filter(item => item.category === selectedCategory.value)
-      }
-      
-      return {
-        totalOrders: data.reduce((sum, item) => sum + item.orders, 0),
-        totalRevenue: data.reduce((sum, item) => sum + item.revenue, 0)
-      }
+    const averageOrderValue = computed(() => {
+      const total = analytics.value.totals?.total_revenue || 0
+      const orders = analytics.value.totals?.total_orders || 0
+      return orders > 0 ? (total / orders).toFixed(2) : '0.00'
     })
 
-    const filteredProducts = computed(() => {
-      let filtered = products.value
+    // API functions
+    const api = {
+      async get(endpoint) {
+        try {
+          const response = await fetch(`${API_BASE_URL}/api${endpoint}`)
+          if (!response.ok) {
+            const errorData = await response.json()
+            throw new Error(errorData.error || `HTTP error! status: ${response.status}`)
+          }
+          return response.json()
+        } catch (err) {
+          console.error(`API GET error for ${endpoint}:`, err)
+          throw err
+        }
+      },
 
-      // Search filter
-      if (searchQuery.value) {
-        filtered = filtered.filter(product =>
-          product.name.toLowerCase().includes(searchQuery.value.toLowerCase()) ||
-          product.description.toLowerCase().includes(searchQuery.value.toLowerCase())
-        )
-      }
+      async post(endpoint, data) {
+        try {
+          const response = await fetch(`${API_BASE_URL}/api${endpoint}`, {
+            method: 'POST',
+            headers: data instanceof FormData ? {} : { 'Content-Type': 'application/json' },
+            body: data instanceof FormData ? data : JSON.stringify(data)
+          })
+          if (!response.ok) {
+            const errorData = await response.json()
+            throw new Error(errorData.error || `HTTP error! status: ${response.status}`)
+          }
+          return response.json()
+        } catch (err) {
+          console.error(`API POST error for ${endpoint}:`, err)
+          throw err
+        }
+      },
 
-      // Category filter
-      if (categorySortFilter.value) {
-        filtered = filtered.filter(product => product.category === categorySortFilter.value)
-      }
+      async put(endpoint, data) {
+        try {
+          const response = await fetch(`${API_BASE_URL}/api${endpoint}`, {
+            method: 'PUT',
+            headers: data instanceof FormData ? {} : { 'Content-Type': 'application/json' },
+            body: data instanceof FormData ? data : JSON.stringify(data)
+          })
+          if (!response.ok) {
+            const errorData = await response.json()
+            throw new Error(errorData.error || `HTTP error! status: ${response.status}`)
+          }
+          return response.json()
+        } catch (err) {
+          console.error(`API PUT error for ${endpoint}:`, err)
+          throw err
+        }
+      },
 
-      // Stock level filter
-      if (inventoryFilter.value) {
-        switch (inventoryFilter.value) {
-          case 'low':
-            filtered = filtered.filter(product => product.stock > 0 && product.stock <= 10)
-            break
-          case 'out':
-            filtered = filtered.filter(product => product.stock === 0)
-            break
-          case 'in':
-            filtered = filtered.filter(product => product.stock > 10)
-            break
+      async delete(endpoint) {
+        try {
+          const response = await fetch(`${API_BASE_URL}/api${endpoint}`, {
+            method: 'DELETE'
+          })
+          if (!response.ok) {
+            const errorData = await response.json()
+            throw new Error(errorData.error || `HTTP error! status: ${response.status}`)
+          }
+          return response.json()
+        } catch (err) {
+          console.error(`API DELETE error for ${endpoint}:`, err)
+          throw err
         }
       }
+    }
 
-      // Sorting
-      if (sortField.value) {
-        filtered.sort((a, b) => {
-          let aVal = a[sortField.value]
-          let bVal = b[sortField.value]
-          
-          if (typeof aVal === 'string') {
-            aVal = aVal.toLowerCase()
-            bVal = bVal.toLowerCase()
-          }
-          
-          if (sortDirection.value === 'asc') {
-            return aVal < bVal ? -1 : aVal > bVal ? 1 : 0
-          } else {
-            return aVal > bVal ? -1 : aVal < bVal ? 1 : 0
-          }
-        })
+    // Check backend connection
+    const checkConnection = async () => {
+      try {
+        await api.get('/health')
+        isConnected.value = true
+        error.value = null
+        return true
+      } catch (err) {
+        isConnected.value = false
+        error.value = `Cannot connect to backend server at ${API_BASE_URL}. Please make sure the backend is running.`
+        return false
       }
+    }
 
-      return filtered
-    })
+    // Data fetching functions
+    const fetchProducts = async () => {
+      try {
+        loading.value = true
+        const params = new URLSearchParams({
+          page: pagination.value.page,
+          limit: pagination.value.limit,
+          sort_by: sortField.value || 'name',
+          sort_order: sortDirection.value
+        })
 
-    const lowStockProducts = computed(() => {
-      return products.value.filter(product => product.stock > 0 && product.stock <= 10)
-    })
+        if (searchQuery.value) params.append('search', searchQuery.value)
+        if (inventoryFilter.value) params.append('stock_status', inventoryFilter.value)
+        if (categorySortFilter.value) params.append('category', categorySortFilter.value)
+
+        const data = await api.get(`/products?${params}`)
+        products.value = data.products || []
+        pagination.value = data.pagination || { page: 1, limit: 20, total: 0, pages: 0 }
+      } catch (err) {
+        console.error('Error fetching products:', err)
+        error.value = 'Failed to fetch products: ' + err.message
+      } finally {
+        loading.value = false
+      }
+    }
+
+    const fetchCategories = async () => {
+      try {
+        const data = await api.get('/products/categories/list')
+        categories.value = data || []
+      } catch (err) {
+        console.error('Error fetching categories:', err)
+      }
+    }
+
+    const fetchAnalytics = async () => {
+      try {
+        loading.value = true
+        const params = new URLSearchParams({
+          period: selectedPeriod.value
+        })
+        
+        if (selectedCategory.value) params.append('category', selectedCategory.value)
+
+        const [revenueData, topProductsData, categoryData] = await Promise.all([
+          api.get(`/analytics/revenue?${params}`),
+          api.get('/analytics/top-products'),
+          api.get('/analytics/category-breakdown')
+        ])
+
+        analytics.value = revenueData || { data: [], totals: {} }
+        topProducts.value = topProductsData || []
+        categoryBreakdown.value = categoryData || []
+      } catch (err) {
+        console.error('Error fetching analytics:', err)
+        error.value = 'Failed to fetch analytics data: ' + err.message
+      } finally {
+        loading.value = false
+      }
+    }
+
+    const fetchInventoryAlerts = async () => {
+      try {
+        const alerts = await api.get('/inventory/alerts')
+        inventoryAlerts.value = alerts || { low_stock: [], out_of_stock: [] }
+      } catch (err) {
+        console.error('Error fetching inventory alerts:', err)
+      }
+    }
+
+    // Debounced search
+    let searchTimeout
+    const debouncedSearch = () => {
+      clearTimeout(searchTimeout)
+      searchTimeout = setTimeout(() => {
+        pagination.value.page = 1
+        fetchProducts()
+      }, 500)
+    }
 
     // Methods
+    const retryConnection = async () => {
+      const connected = await checkConnection()
+      if (connected) {
+        handleTabChange(activeTab.value)
+      }
+    }
+
     const sortBy = (field) => {
       if (sortField.value === field) {
         sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc'
@@ -619,23 +762,36 @@ export default {
         sortField.value = field
         sortDirection.value = 'asc'
       }
+      fetchProducts()
     }
 
-    const updateStock = (product) => {
-      console.log(`Updated stock for ${product.name}: ${product.stock}`)
-      // In a real app, this would make an API call to update the database
+    const changePage = (page) => {
+      pagination.value.page = page
+      fetchProducts()
+    }
+
+    const updateStock = async (product, newStock) => {
+      try {
+        await api.put(`/inventory/stock/${product.id}`, { stock: parseInt(newStock) })
+        product.stock = parseInt(newStock)
+      } catch (err) {
+        console.error('Error updating stock:', err)
+        alert('Failed to update stock: ' + err.message)
+      }
     }
 
     const editProduct = (product) => {
       console.log('Editing product:', product)
-      // In a real app, this would open an edit modal or navigate to edit page
     }
 
-    const deleteProduct = (productId) => {
+    const deleteProduct = async (productId) => {
       if (confirm('Are you sure you want to delete this product?')) {
-        const index = products.value.findIndex(p => p.id === productId)
-        if (index > -1) {
-          products.value.splice(index, 1)
+        try {
+          await api.delete(`/products/${productId}`)
+          await fetchProducts()
+        } catch (err) {
+          console.error('Error deleting product:', err)
+          alert('Failed to delete product: ' + err.message)
         }
       }
     }
@@ -644,23 +800,42 @@ export default {
       const file = event.target.files[0]
       if (file) {
         newProduct.value.image = file
-        console.log('Image uploaded:', file.name)
       }
     }
 
-    const addProduct = () => {
-      const product = {
-        id: Date.now(),
-        ...newProduct.value
+    const addProduct = async () => {
+      try {
+        submitting.value = true
+        const formData = new FormData()
+        
+        formData.append('name', newProduct.value.name)
+        formData.append('description', newProduct.value.description)
+        formData.append('category', newProduct.value.category)
+        formData.append('price', newProduct.value.price)
+        formData.append('stock', newProduct.value.stock)
+        
+        if (newProduct.value.image) {
+          formData.append('image', newProduct.value.image)
+        }
+
+        await api.post('/products', formData)
+        
+        resetForm()
+        showSuccessMessage.value = true
+        
+        setTimeout(() => {
+          showSuccessMessage.value = false
+        }, 5000)
+
+        if (activeTab.value === 'inventory') {
+          await fetchProducts()
+        }
+      } catch (err) {
+        console.error('Error adding product:', err)
+        alert('Failed to add product: ' + err.message)
+      } finally {
+        submitting.value = false
       }
-      
-      products.value.push(product)
-      resetForm()
-      showSuccessMessage.value = true
-      
-      setTimeout(() => {
-        showSuccessMessage.value = false
-      }, 5000)
     }
 
     const resetForm = () => {
@@ -672,7 +847,38 @@ export default {
         stock: 0,
         image: null
       }
+      const fileInput = document.getElementById('file-upload')
+      if (fileInput) fileInput.value = ''
     }
+
+    const handleTabChange = async (newTab) => {
+      activeTab.value = newTab
+      
+      const connected = await checkConnection()
+      if (!connected) return
+
+      if (newTab === 'revenue') {
+        await fetchAnalytics()
+      } else if (newTab === 'inventory') {
+        await fetchProducts()
+        await fetchInventoryAlerts()
+      }
+    }
+
+    // Lifecycle hooks
+    onMounted(async () => {
+      const connected = await checkConnection()
+      if (connected) {
+        await fetchCategories()
+        
+        if (activeTab.value === 'revenue') {
+          await fetchAnalytics()
+        } else if (activeTab.value === 'inventory') {
+          await fetchProducts()
+          await fetchInventoryAlerts()
+        }
+      }
+    })
 
     return {
       // Reactive data
@@ -684,31 +890,44 @@ export default {
       categorySortFilter,
       sortField,
       showSuccessMessage,
+      loading,
+      submitting,
+      isConnected,
+      error,
       tabs,
       categories,
       products,
       newProduct,
+      analytics,
+      topProducts,
+      categoryBreakdown,
+      inventoryAlerts,
+      pagination,
+      API_BASE_URL,
       
       // Computed
-      filteredMetrics,
-      filteredProducts,
-      lowStockProducts,
+      averageOrderValue,
       
       // Methods
+      fetchAnalytics,
+      fetchProducts,
+      debouncedSearch,
       sortBy,
+      changePage,
       updateStock,
       editProduct,
       deleteProduct,
       handleImageUpload,
       addProduct,
-      resetForm
+      resetForm,
+      handleTabChange,
+      retryConnection
     }
   }
 }
 </script>
 
 <style scoped>
-/* Additional custom styles if needed */
 .fade-enter-active, .fade-leave-active {
   transition: opacity 0.3s;
 }
