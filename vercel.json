@@ -1,0 +1,13 @@
+{
+  "builds": [
+    {
+      "src": "start.sh",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "public"
+      }
+    }
+  ],
+  "buildCommand": "./start.sh",
+  "outputDirectory": "public"
+}
